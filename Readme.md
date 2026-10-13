@@ -1,430 +1,250 @@
-\# Employee Leave Management System | SAP ABAP
+<div align="center">
+
+# SAP ABAP Employee Leave Management System
+
+### An Interactive Leave Application & Approval Solution Built with SAP ABAP
+
+![SAP ABAP](https://img.shields.io/badge/SAP-ABAP-0A6ED1?style=for-the-badge)
+![Open SQL](https://img.shields.io/badge/Open_SQL-Database-176B87?style=for-the-badge)
+![ALV](https://img.shields.io/badge/Interactive_ALV-CL__SALV__TABLE-00875A?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Functional_Tests_Passed-2EA44F?style=for-the-badge)
+
+**Leave applications · Approval workflows · Balance validation · Interactive ALV dashboard**
+
+</div>
+
+---
+
+## Overview
+
+The **Employee Leave Management System** is a custom SAP ABAP application that manages employee leave requests from submission through approval or rejection. It combines ABAP Dictionary tables, Open SQL, SAP number ranges, enqueue/dequeue locking, and an event-driven **`CL_SALV_TABLE` dashboard**.
+
+This is a learning and portfolio project developed and tested in an SAP ABAP environment. It is **not yet production-ready**; authorization controls and further concurrency safeguards are planned improvements.
+
+## Features
+
+| Module | Capabilities |
+| --- | --- |
+| **Leave application** | Validate employee, dates, leave balance, and overlapping requests; create `PENDING` requests |
+| **Leave approval** | Approve or reject pending requests; prevent repeat processing; record processing SAP user |
+| **Leave balance** | Increase `USED_LEAVE` only for approved requests; calculate remaining balance |
+| **Interactive ALV** | Filter by employee, view pending/all requests, approve or reject a selected row |
+| **Data consistency** | Exclusive employee lock during approval; commit or roll back database changes |
+| **Unique IDs** | Generate leave request numbers using `NUMBER_GET_NEXT` and `ZELM_LVNR` |
+
+## Tech Stack
+
+`SAP ABAP` · `ABAP Dictionary (SE11)` · `Open SQL` · `OO ABAP` · `CL_SALV_TABLE` · `SNRO` · `Enqueue/Dequeue` · `PF-STATUS` · `SAP GUI`
+
+## Architecture
+
+```mermaid
+flowchart TD
+    U["SAP GUI User"] --> A["ZELM_APPLY_LEAVE"]
+    U --> B["ZELM_APPROVE_LEAVE"]
+    U --> C["ZELM_LEAVE_DASHBOARD"]
+    A --> V["Employee / Date / Balance / Overlap Validation"]
+    V --> N["ZELM_LVNR: NUMBER_GET_NEXT"]
+    N --> L[("ZELM_LEAVE")]
+    B --> P["Approval / Rejection Logic"]
+    C --> P
+    P --> K["EZELM_EMPLOYEE: Exclusive Lock"]
+    K --> E[("ZELM_EMPLOYEE")]
+    K --> L
+    C --> J["Open SQL INNER JOIN"]
+    E --> J
+    L --> J
+    J --> C
+```
+
+### Leave request lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Submit valid request
+    PENDING --> APPROVED: Approve and update used leave
+    PENDING --> REJECTED: Reject without balance deduction
+    APPROVED --> [*]
+    REJECTED --> [*]
+```
+
+## SAP Development Objects
+
+| Type | Object | Purpose |
+| --- | --- | --- |
+| Package | `ZEMP_LEAVE_MGMT` | Project development package |
+| Transparent table | `ZELM_EMPLOYEE` | Employee details and leave balance |
+| Transparent table | `ZELM_LEAVE` | Leave requests and status |
+| Data element | `ZELM_EMP_ID` | Employee identifier |
+| Lock object | `EZELM_EMPLOYEE` | Exclusive employee-level approval lock |
+| Number range | `ZELM_LVNR` | Internally assigned 10-digit leave IDs |
+| Executable report | `ZELM_APPLY_LEAVE` | Create leave applications |
+| Executable report | `ZELM_APPROVE_LEAVE` | Approve or reject by leave ID |
+| Executable report | `ZELM_LEAVE_DASHBOARD` | Interactive ALV processing |
+| GUI status | `ZLEAVE_STATUS` | Custom `ZAPPROVE` / `ZREJECT` functions |
 
+## Database Design
 
+### `ZELM_EMPLOYEE`
 
-An SAP ABAP-based Employee Leave Management System that automates leave applications, approvals, rejections, and leave balance tracking using SAP Dictionary, Open SQL, number ranges, lock objects, and an interactive ALV dashboard.
+| Field | Type | Description |
+| --- | --- | --- |
+| `MANDT` | `CLNT(3)` | Client; primary key |
+| `EMP_ID` | `CHAR(10)` | Employee ID; primary key |
+| `EMP_NAME` | `CHAR(50)` | Employee name |
+| `DEPARTMENT` | `CHAR(30)` | Department |
+| `EMAIL` | `CHAR(60)` | Email |
+| `TOTAL_LEAVE` | `INT4` | Allocated leave days |
+| `USED_LEAVE` | `INT4` | Approved leave days used |
 
+### `ZELM_LEAVE`
 
+| Field | Type | Description |
+| --- | --- | --- |
+| `MANDT` | `CLNT(3)` | Client; primary key |
+| `LEAVE_ID` | `CHAR(10)` | Leave ID; primary key |
+| `EMP_ID` | `CHAR(10)` | Foreign key to employee |
+| `START_DATE` | `DATS` | Leave start |
+| `END_DATE` | `DATS` | Leave end |
+| `LEAVE_DAYS` | `INT4` | Inclusive calendar days |
+| `REASON` | `CHAR(100)` | Leave reason |
+| `STATUS` | `CHAR(10)` | `PENDING`, `APPROVED`, or `REJECTED` |
+| `APPROVED_BY` | `CHAR(12)` | SAP user who processed the request |
 
-\## Project Overview
+**Relationship:** One employee can have many leave requests. `ZELM_LEAVE-EMP_ID` uses `ZELM_EMPLOYEE` as its check table.
 
+**Balance formula:** `Available Leave = TOTAL_LEAVE - USED_LEAVE`
 
+**Duration formula:** `LEAVE_DAYS = END_DATE - START_DATE + 1` (calendar days, including weekends and holidays).
 
-This project demonstrates the development of an employee leave management application in SAP GUI. It provides a structured workflow for submitting leave requests, validating business rules, processing approvals, and maintaining employee leave balances.
+## Application Workflow
 
+1. Run `ZELM_APPLY_LEAVE` and enter employee ID, start date, end date, and reason.
+2. The report checks employee existence, date validity, remaining balance, and overlap with pending/approved requests.
+3. `NUMBER_GET_NEXT` allocates an ID from number range interval `01`; the request is inserted with status `PENDING`.
+4. Open `ZELM_LEAVE_DASHBOARD` to view pending requests or all requests.
+5. Select **one** pending row and use the custom **Approve** or **Reject** toolbar action.
+6. The approval logic locks the employee, re-reads the request, checks the current balance, updates records, commits or rolls back, releases the lock, and refreshes the ALV.
 
+## Number Range and Lock Configuration
 
-The application uses custom SAP database tables and an interactive ALV report to manage leave requests efficiently.
+| Setting | Value |
+| --- | --- |
+| Number range object | `ZELM_LVNR` |
+| Interval | `01` |
+| From / To | `0000000001` / `9999999999` |
+| Assignment | Internal (`Ext` unchecked) |
+| Number length domain | `NUMC10` |
+| Lock object | `EZELM_EMPLOYEE` |
+| Lock table | `ZELM_EMPLOYEE` |
+| Lock mode | Exclusive, not cumulative |
 
+The generated lock function modules are `ENQUEUE_EZELM_EMPLOYEE` and `DEQUEUE_EZELM_EMPLOYEE`.
 
+## Testing
 
-\## Technologies Used
+The following scenarios were manually verified in SAP GUI:
 
+| Scenario | Result |
+| --- | --- |
+| Submit a valid leave request | Passed |
+| Approve a pending request | Passed |
+| Reject a pending request | Passed |
+| Reject overlapping pending/approved dates | Passed |
+| Reject a request exceeding available leave | Passed |
+| Reject start date after end date | Passed |
+| Reject past start date | Passed |
+| Prevent duplicate approval | Passed |
+| Verify approved days match `USED_LEAVE` | Passed |
+| Display and refresh interactive ALV | Passed |
 
+**Example verification:** `TOTAL_LEAVE = 24`, `USED_LEAVE = 5`, and **available leave = 19**. Two approved requests used 3 and 2 days; a rejected 3-day request did not reduce the balance.
 
-\- SAP ABAP
+## Screenshots
 
-\- ABAP Dictionary (SE11)
+> Add your own SAP GUI screenshots to the `screenshots/` folder. The image links below will render once those files are uploaded.
 
-\- Open SQL
+| Leave Application | Interactive ALV Dashboard |
+| --- | --- |
+| ![Leave application](screenshots/leave_application.png) | ![Interactive ALV dashboard](screenshots/leave_dashboard.png) |
 
-\- Object-Oriented ABAP
+<details>
+<summary><strong>View SAP Dictionary and configuration screenshots</strong></summary>
 
-\- CL\_SALV\_TABLE
+**Employee master table**
 
-\- SAP Lock Objects
+![Employee master table](screenshots/employee_table.png)
 
-\- SAP Number Range Objects (SNRO)
+**Leave request table**
 
-\- Custom GUI Status (PF-STATUS)
+![Leave request table](screenshots/leave_table.png)
 
-\- Database Transaction Management
+**Foreign key configuration**
 
+![Employee foreign key](screenshots/foreign_key.png)
 
+**Exclusive lock object**
 
-\## Key Features
+![Lock object](screenshots/lock_object.png)
 
+**Number range interval**
 
+![Number range](screenshots/number_range.png)
 
-\### Employee Leave Application
+</details>
 
-\- Submit leave requests with employee ID, dates, and reason.
+## Suggested Repository Structure
 
-\- Validate employee existence.
+```text
+SAP-ABAP-Employee-Leave-Management/
+├── README.md
+├── src/
+│   ├── ZELM_APPLY_LEAVE.abap
+│   ├── ZELM_APPROVE_LEAVE.abap
+│   └── ZELM_LEAVE_DASHBOARD.abap
+├── docs/
+│   ├── architecture.md
+│   ├── database-design.md
+│   ├── configuration.md
+│   └── test-cases.md
+└── screenshots/
+    ├── employee_table.png
+    ├── leave_table.png
+    ├── foreign_key.png
+    ├── lock_object.png
+    ├── number_range.png
+    ├── leave_application.png
+    └── leave_dashboard.png
+```
 
-\- Prevent invalid and past leave dates.
+## Setup Notes
 
-\- Detect overlapping pending or approved requests.
+This repository documents custom objects developed in an existing SAP ABAP system; it is **not a standalone application** that can run without SAP.
 
-\- Check available leave balance.
+1. Create package `ZEMP_LEAVE_MGMT` and the required DDIC objects in `SE11`.
+2. Define the employee-to-leave foreign key and activate the tables.
+3. Create and activate `EZELM_EMPLOYEE` with an exclusive employee lock.
+4. Configure `ZELM_LVNR` in `SNRO` with internal interval `01`.
+5. Create the three executable ABAP reports in `SE38` or ADT.
+6. Create GUI status `ZLEAVE_STATUS` with `ZAPPROVE` and `ZREJECT` function codes.
+7. Add sample employee records and execute the reports to verify the workflow.
 
-\- Generate leave request IDs using SAP number ranges.
+> **Note:** ABAP source files alone do not recreate DDIC definitions, number range customizing, or the GUI status. Document/export those objects separately before treating this repository as reproducible.
 
-\- Store new applications with PENDING status.
+## Future Improvements
 
+- Role-based authorization checks for approval and rejection.
+- Employee locking during submission to prevent concurrent overlapping requests.
+- Approval-time overlap checks and pending-leave reservation policy.
+- Holiday calendars, working-day calculations, and leave categories.
+- Audit timestamps and clearer approval/rejection history.
+- ABAP Unit tests and additional concurrency testing.
+- SAP Fiori user interface.
 
+---
 
-\### Leave Approval and Rejection
+<div align="center">
 
-\- Approve or reject pending requests.
+**Built as a hands-on SAP ABAP development project.**
 
-\- Prevent duplicate processing.
-
-\- Update employee leave balances after approval.
-
-\- Preserve leave balances when requests are rejected.
-
-\- Record the processing SAP username.
-
-\- Use exclusive employee locks and database transactions.
-
-
-
-\### Interactive ALV Dashboard
-
-\- Display employee and leave request details.
-
-\- Filter by employee ID.
-
-\- Display pending requests or all requests.
-
-\- Approve or reject requests using custom toolbar buttons.
-
-\- Refresh the dashboard after successful processing.
-
-\- Calculate and display available leave balances.
-
-
-
-\## SAP Development Objects
-
-
-
-| Object | Name | Purpose |
-
-|---|---|---|
-
-| Package | ZEMP\_LEAVE\_MGMT | Development package |
-
-| Transparent Table | ZELM\_EMPLOYEE | Employee master data |
-
-| Transparent Table | ZELM\_LEAVE | Leave request records |
-
-| Data Element | ZELM\_EMP\_ID | Employee identification |
-
-| Lock Object | EZELM\_EMPLOYEE | Employee-level exclusive locking |
-
-| Number Range | ZELM\_LVNR | Leave request ID generation |
-
-| ABAP Report | ZELM\_APPLY\_LEAVE | Submit leave applications |
-
-| ABAP Report | ZELM\_APPROVE\_LEAVE | Approve or reject requests |
-
-| ABAP Report | ZELM\_LEAVE\_DASHBOARD | Interactive ALV dashboard |
-
-| GUI Status | ZLEAVE\_STATUS | Custom approval and rejection actions |
-
-
-
-\## Database Design
-
-
-
-\### ZELM\_EMPLOYEE
-
-
-
-Stores employee information and leave entitlements.
-
-
-
-| Field | Type |
-
-|---|---|
-
-| MANDT | CLNT(3) |
-
-| EMP\_ID | CHAR(10) |
-
-| EMP\_NAME | CHAR(50) |
-
-| DEPARTMENT | CHAR(30) |
-
-| EMAIL | CHAR(60) |
-
-| TOTAL\_LEAVE | INT4 |
-
-| USED\_LEAVE | INT4 |
-
-
-
-Primary Key: MANDT + EMP\_ID
-
-
-
-\### ZELM\_LEAVE
-
-
-
-Stores leave requests and approval information.
-
-
-
-| Field | Type |
-
-|---|---|
-
-| MANDT | CLNT(3) |
-
-| LEAVE\_ID | CHAR(10) |
-
-| EMP\_ID | CHAR(10) |
-
-| START\_DATE | DATS |
-
-| END\_DATE | DATS |
-
-| LEAVE\_DAYS | INT4 |
-
-| REASON | CHAR(100) |
-
-| STATUS | CHAR(10) |
-
-| APPROVED\_BY | CHAR(12) |
-
-
-
-Primary Key: MANDT + LEAVE\_ID
-
-
-
-Foreign Key: EMP\_ID references ZELM\_EMPLOYEE.
-
-
-
-\*\*Relationship:\*\* One employee can have multiple leave requests.
-
-
-
-\## Application Workflow
-
-
-
-1\. An employee submits a leave request.
-
-2\. The application validates the employee, dates, leave balance, and overlapping requests.
-
-3\. SAP generates a leave ID through `NUMBER\_GET\_NEXT`.
-
-4\. The request is saved with PENDING status.
-
-5\. The request appears in the ALV dashboard.
-
-6\. A user selects the request and chooses Approve or Reject.
-
-7\. The system acquires an exclusive employee lock and revalidates the request.
-
-8\. Approval updates used leave days; rejection leaves the balance unchanged.
-
-9\. The database transaction is committed and the dashboard refreshed.
-
-
-
-\## Business Rules
-
-
-
-\- Start date must not exceed end date.
-
-\- Leave applications cannot start in the past.
-
-\- Requested days cannot exceed available leave balance at submission.
-
-\- Requests cannot overlap existing PENDING or APPROVED leave requests.
-
-\- Only PENDING requests can be approved or rejected.
-
-\- Approved leave increases USED\_LEAVE.
-
-\- Rejected leave does not affect USED\_LEAVE.
-
-
-
-Available Leave = Total Leave − Used Leave
-
-
-
-Leave duration is calculated using inclusive calendar days.
-
-
-
-\## Testing
-
-
-
-The following functional and negative scenarios were tested in SAP GUI.
-
-
-
-| Test Case | Result |
-
-|---|---|
-
-| Successful leave submission | Passed |
-
-| Successful leave approval | Passed |
-
-| Successful leave rejection | Passed |
-
-| Overlapping leave validation | Passed |
-
-| Insufficient balance validation | Passed |
-
-| Invalid date range validation | Passed |
-
-| Past date validation | Passed |
-
-| Duplicate approval prevention | Passed |
-
-| Employee leave balance consistency | Passed |
-
-| ALV dashboard display and processing | Passed |
-
-
-
-\### Verified Example
-
-
-
-An employee with 24 total leave days and 5 approved leave days has an available balance of 19 days.
-
-
-
-The system correctly excludes rejected leave requests from the used leave balance.
-
-
-
-\## Number Range Configuration
-
-
-
-Number Range Object: `ZELM\_LVNR`
-
-
-
-\- Interval: 01
-
-\- Starting Number: 0000000001
-
-\- Ending Number: 9999999999
-
-\- Domain: NUMC10
-
-\- Assignment: Internal
-
-
-
-\## Concurrency and Transaction Handling
-
-
-
-The approval programs use the `EZELM\_EMPLOYEE` lock object to coordinate concurrent updates to employee leave balances.
-
-
-
-They also use `COMMIT WORK` or `COMMIT WORK AND WAIT` and `ROLLBACK WORK` to handle database transactions.
-
-
-
-\## Project Screenshots
-
-
-
-Add the following screenshots to the `screenshots` directory:
-
-
-
-\- Employee master table structure
-
-\- Leave request table structure
-
-\- Foreign key relationship
-
-\- Employee lock object
-
-\- Number range configuration
-
-\- Leave application screen
-
-\- Interactive ALV dashboard
-
-\- Successful approval and rejection results
-
-
-
-\## Setup Requirements
-
-
-
-The application requires access to an SAP ABAP development environment with authorization to create and activate custom Dictionary objects, ABAP reports, number range configuration, and GUI statuses.
-
-
-
-To recreate the application:
-
-
-
-1\. Create the custom package and DDIC objects.
-
-2\. Configure the employee-to-leave foreign key.
-
-3\. Create and activate the lock object.
-
-4\. Configure number range object `ZELM\_LVNR` and interval 01.
-
-5\. Create and activate the three ABAP reports.
-
-6\. Create GUI status `ZLEAVE\_STATUS` with function codes `ZAPPROVE` and `ZREJECT`.
-
-7\. Maintain sample employee master records.
-
-8\. Execute the reports and perform functional tests.
-
-
-
-\## Current Limitations and Future Enhancements
-
-
-
-\- Add role-based authorization checks for approval actions.
-
-\- Lock employee records during leave submission to strengthen concurrent-request handling.
-
-\- Add approval-time overlap checks.
-
-\- Introduce holiday calendars and working-day leave calculations.
-
-\- Add leave categories and entitlement policies.
-
-\- Add approval timestamps and detailed audit history.
-
-\- Introduce automated ABAP Unit tests.
-
-\- Develop an SAP Fiori interface.
-
-
-
-\## Learning Outcomes
-
-
-
-This project demonstrates practical experience with SAP ABAP report development, SAP Dictionary objects, Open SQL, object-oriented event handling, interactive ALV, SAP locking mechanisms, number ranges, and transaction management.
-
-
-
-\## Project Status
-
-
-
-Core implementation and functional testing completed. Further security, concurrency, and automated testing improvements are planned before production use.
-
+</div>
