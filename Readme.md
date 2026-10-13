@@ -162,8 +162,6 @@ The following scenarios were manually verified in SAP GUI:
 
 ## Screenshots
 
-> Add your own SAP GUI screenshots to the `screenshots/` folder. The image links below will render once those files are uploaded.
-
 | Leave Application | Interactive ALV Dashboard |
 | --- | --- |
 | ![Leave application](screenshots/leave_application.png) | ![Interactive ALV dashboard](screenshots/leave_dashboard.png) |
